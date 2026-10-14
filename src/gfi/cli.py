@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
+from rich.text import Text
 
 from gfi.search import GitHubSearcher, Issue
 
@@ -106,11 +107,11 @@ def _format_date(date_str: str) -> str:
         return date_str[:10]
 
 
-def _truncate(text: str, length: int = 60) -> str:
-    """Truncate text with ellipsis."""
-    if len(text) <= length:
-        return text
-    return text[:length-3] + "..."
+def _truncate(text: str, length: int = 60) -> Text:
+    """Truncate text with ellipsis as literal (markup-free) Rich text."""
+    if len(text) > length:
+        text = text[:length - 3] + "..."
+    return Text(text)
 
 
 @click.group()
@@ -125,7 +126,7 @@ def cli():
 @click.option("--label", "-l", default="good first issue", help="Label to filter")
 @click.option("--language", "-L", default=None, help="Programming language filter")
 @click.option("--stars-min", "-s", default=None, type=int, help="Minimum repo stars")
-@click.option("--limit", "-n", default=20, help="Max results")
+@click.option("--limit", "-n", default=20, help="Max results (gh search ceiling: 1000)")
 @click.option("--json-output", "json_out", is_flag=True, help="Output as JSON")
 @click.option("--csv", "csv_out", is_flag=True, help="Output as CSV")
 @click.option("--no-assigned/--assigned", default=True, help="Exclude assigned issues")
@@ -403,7 +404,7 @@ def trending(limit, json_out, csv_out):
 
     if json_out:
         output = []
-        for issue in all_issues[:limit]:
+        for issue in all_issues:
             output.append({
                 "number": issue.number,
                 "title": issue.title,
@@ -415,7 +416,7 @@ def trending(limit, json_out, csv_out):
         return
 
     if csv_out:
-        _write_csv(all_issues[:limit])
+        _write_csv(all_issues)
         return
 
     console.print(Panel(
@@ -430,7 +431,7 @@ def trending(limit, json_out, csv_out):
     table.add_column("Repo", width=25)
     table.add_column("Stars", justify="right", width=8)
 
-    for issue in all_issues[:limit]:
+    for issue in all_issues:
         table.add_row(
             str(issue.number),
             _truncate(issue.title, 48),
@@ -550,7 +551,25 @@ def reset():
 @click.argument("number", type=int)
 def open(repo, number):
     """Open a GitHub issue in the browser."""
+    import shutil
     import subprocess
+
     url = f"https://github.com/{repo}/issues/{number}"
-    subprocess.run(["xdg-open", url], capture_output=True)
+
+    opener = shutil.which("xdg-open") or shutil.which("open")
+    if opener is None:
+        console.print(
+            f"[red]No browser opener found (looked for xdg-open and open).[/red] "
+            f"Open manually: {url}"
+        )
+        raise SystemExit(1)
+
+    result = subprocess.run([opener, url], capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip()
+        console.print(f"[red]Failed to open {url}[/red]")
+        if detail:
+            console.print(f"[dim]{detail}[/dim]")
+        raise SystemExit(1)
+
     console.print(f"[dim]Opened: {url}[/dim]")

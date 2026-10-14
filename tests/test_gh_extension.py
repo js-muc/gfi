@@ -64,7 +64,7 @@ def test_gh_extension_root_script_prints_version():
         env={**os.environ, "PYTHON": sys.executable},
     )
     assert result.returncode == 0, f"gh-gfi --version failed: {result.stderr}"
-    assert "version 0.1.0" in result.stdout, result.stdout
+    assert "version 0.1.1" in result.stdout, result.stdout
     assert not result.stdout.lstrip().startswith("Usage:"), result.stdout
 
 

@@ -513,3 +513,134 @@ class TestSearchGlobal:
             ))
 
         assert results == []
+
+
+class TestLimitClampWarning:
+    """Tests for the stderr warning when --limit exceeds the 1000 ceiling."""
+
+    @pytest.fixture
+    def searcher(self, tmp_path):
+        s = GitHubSearcher(cache_dir=tmp_path / "cache")
+        s._get_stars = lambda repo: 100
+        s._get_language = lambda repo: "Python"
+        return s
+
+    @patch("gfi.search.subprocess.run")
+    def test_warns_on_stderr_when_limit_exceeds_1000_repo(
+        self, mock_run, searcher, capsys
+    ):
+        mock_run.return_value = _gh_result(stdout="[]")
+
+        list(searcher._search_repo(
+            "owner/repo", "query", "good first issue", "open", None,
+            None, True, None,
+            max_age_days=None, repo_max_age_days=None, limit=1500,
+        ))
+
+        captured = capsys.readouterr()
+        assert "1000" in captured.err
+        assert "1500" in captured.err
+        assert captured.out == ""
+
+    @patch("gfi.search.subprocess.run")
+    def test_warns_on_stderr_when_limit_exceeds_1000_global(
+        self, mock_run, searcher, capsys
+    ):
+        mock_run.return_value = _gh_result(stdout="[]")
+
+        list(searcher._search_global(
+            "query", "good first issue", "open", None, None, True, None,
+            max_age_days=None, repo_max_age_days=None, limit=2000,
+        ))
+
+        captured = capsys.readouterr()
+        assert "1000" in captured.err
+        assert "2000" in captured.err
+        assert captured.out == ""
+
+    @patch("gfi.search.subprocess.run")
+    def test_no_warning_when_limit_at_1000(
+        self, mock_run, searcher, capsys
+    ):
+        mock_run.return_value = _gh_result(stdout="[]")
+
+        list(searcher._search_repo(
+            "owner/repo", "query", "good first issue", "open", None,
+            None, True, None,
+            max_age_days=None, repo_max_age_days=None, limit=1000,
+        ))
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    @patch("gfi.search.subprocess.run")
+    def test_no_warning_when_limit_below_1000(
+        self, mock_run, searcher, capsys
+    ):
+        mock_run.return_value = _gh_result(stdout="[]")
+
+        list(searcher._search_repo(
+            "owner/repo", "query", "good first issue", "open", None,
+            None, True, None,
+            max_age_days=None, repo_max_age_days=None, limit=500,
+        ))
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    @patch("gfi.search.subprocess.run")
+    def test_clamped_limit_still_passed_to_gh(
+        self, mock_run, searcher, capsys
+    ):
+        mock_run.return_value = _gh_result(stdout="[]")
+
+        list(searcher._search_repo(
+            "owner/repo", "query", "good first issue", "open", None,
+            None, True, None,
+            max_age_days=None, repo_max_age_days=None, limit=1500,
+        ))
+
+        cmd = mock_run.call_args[0][0]
+        limit_idx = cmd.index("--limit")
+        assert cmd[limit_idx + 1] == "1000"
+    @patch("gfi.search.subprocess.run")
+    def test_excludes_issues_when_language_does_not_match(self, mock_run, searcher):
+        payload = json.dumps([{
+            "number": 12,
+            "title": "Issue in python repo",
+            "repository": {"nameWithOwner": "psf/requests"},
+            "url": "https://github.com/psf/requests/issues/12",
+            "state": "open",
+            "labels": [{"name": "good first issue"}],
+            "assignees": [],
+            "createdAt": "",
+            "updatedAt": "",
+            "body": "",
+            "commentsCount": 0,
+        }])
+
+        def fake_run(cmd, *args, **kwargs):
+            if "search" in cmd:
+                return _gh_result(stdout=payload)
+            if "repos/psf/requests" in " ".join(cmd):
+                return _gh_result(stdout='"Python"\n')
+            return _gh_result()
+
+        mock_run.side_effect = fake_run
+
+        # Case-insensitive match succeeds
+        results_matching = list(searcher._search_global(
+            "query", "good first issue", "open", language="python", stars_min=None,
+            unassigned_only=True, created_after=None,
+            max_age_days=None, repo_max_age_days=None, limit=20,
+        ))
+        assert len(results_matching) == 1
+        assert results_matching[0].number == 12
+
+        # Unrecognised/mismatched language is filtered out
+        results_mismatched = list(searcher._search_global(
+            "query", "good first issue", "open", language="rustt", stars_min=None,
+            unassigned_only=True, created_after=None,
+            max_age_days=None, repo_max_age_days=None, limit=20,
+        ))
+        assert results_mismatched == []
